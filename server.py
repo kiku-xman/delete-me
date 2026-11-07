@@ -7,7 +7,7 @@ Version adaptée du notebook Colab colab_debian_server_v2.ipynb.
 Lancement (le runner n'est pas root) :  sudo -E python3 -u server.py
 Toute la configuration passe par des variables d'environnement (voir server.yml).
 """
-import os, re, sys, time, shutil, secrets, string, socket, signal, subprocess, html
+import os, re, sys, time, shutil, secrets, string, socket, signal, subprocess, html, random
 import urllib.request, urllib.parse
 from subprocess import DEVNULL, PIPE, STDOUT
 
@@ -27,6 +27,8 @@ TG_TOKEN        = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_USER         = os.environ.get("TELEGRAM_USER_ID", "").strip()
 RUN_MINUTES     = int(os.environ.get("RUN_MINUTES", "345"))      # le job GitHub est limité à 360 min
 RENEW_MINUTES   = int(os.environ.get("RENEW_MINUTES", "55"))     # Pinggy gratuit coupe à 60 min
+HEARTBEAT_MIN   = int(os.environ.get("HEARTBEAT_MIN_SECONDS", "30"))  # intervalle aléatoire entre deux logs : min...
+HEARTBEAT_MAX   = int(os.environ.get("HEARTBEAT_MAX_SECONDS", "60"))  # ...et max (en secondes)
 # ===========================================================================================
 
 LOG_DIR = "/tmp"
@@ -279,34 +281,93 @@ def shutdown(reason):
     tg_send(f"🛑 <b>Serveur GitHub Actions arrêté</b> — {html.escape(reason)}")
     log(f"🛑 Arrêt : {reason}")
 
+def _meminfo():
+    d = {}
+    try:
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":")
+            d[k] = int(v.split()[0])
+    except Exception:
+        pass
+    return d
+
+def _established(port):
+    """Nombre de connexions TCP établies sur un port local (0 si inconnu)."""
+    try:
+        out = subprocess.run(["ss", "-Htn", "state", "established", f"( sport = :{port} )"],
+                             stdout=PIPE, stderr=DEVNULL, text=True, timeout=5).stdout
+        return len([l for l in out.splitlines() if l.strip()])
+    except Exception:
+        return 0
+
+def _tunnel_age(name):
+    return int((time.time() - STARTED[name]) // 60) if name in STARTED else None
+
+def heartbeat_line():
+    """Message de statut RÉEL, choisi au hasard parmi plusieurs formulations/mesures."""
+    left = max(0, int((DEADLINE - time.time()) // 60))
+    up = int((time.time() - START) // 60)
+    mem = _meminfo()
+    mem_used = (mem.get("MemTotal", 0) - mem.get("MemAvailable", 0)) // 1024
+    mem_total = mem.get("MemTotal", 0) // 1024
+    du = shutil.disk_usage("/")
+    load1, load5, _ = os.getloadavg()
+    svc = {"SSH": port_open(22) if ENABLE_SSH else None,
+           "RDP": port_open(3389) if ENABLE_RDP else None,
+           "Web": port_open(WEB_PORT) if ENABLE_WEB else None}
+    svc_txt = " | ".join(f"{k} {'ok' if v else 'KO'}" for k, v in svc.items() if v is not None)
+    conns = _established(22) + _established(3389) + _established(WEB_PORT)
+    ages = ", ".join(f"{n} {_tunnel_age(n)} min" for n in TUNNELS if _tunnel_age(n) is not None)
+    nxt = min((RENEW_MINUTES - _tunnel_age(n) for n in PINGGY_PORTS if _tunnel_age(n) is not None), default=None)
+
+    options = [
+        lambda: f"Services : {svc_txt}",
+        lambda: f"Charge CPU : {load1:.2f} (1 min) / {load5:.2f} (5 min)",
+        lambda: f"Mémoire : {mem_used} Mo utilisés sur {mem_total} Mo",
+        lambda: f"Disque : {du.used // 2**30} Go utilisés, {du.free // 2**30} Go libres",
+        lambda: f"Connexions actives sur le serveur : {conns}",
+        lambda: f"Serveur en ligne depuis {up} min, arrêt prévu dans ~{left} min",
+        lambda: f"Âge des tunnels : {ages}" if ages else f"Serveur en ligne depuis {up} min",
+        lambda: (f"Prochain renouvellement des tunnels Pinggy dans ~{max(0, nxt)} min"
+                 if nxt is not None else f"Temps restant avant l'arrêt : ~{left} min"),
+        lambda: f"Vérification de santé terminée : {svc_txt} (charge {load1:.2f})",
+    ]
+    return f"[{time.strftime('%H:%M:%S', time.gmtime())} UTC] " + random.choice(options)()
+
 def supervise():
     renew = RENEW_MINUTES * 60
-    last_beat = time.time()
     warned = False
+    last_check = 0.0
+    next_beat = time.time() + random.uniform(HEARTBEAT_MIN, HEARTBEAT_MAX)
     while time.time() < DEADLINE:
-        time.sleep(30)
-        changed = []
-        for name, port in PINGGY_PORTS.items():
-            expired = (time.time() - STARTED.get(name, 0)) >= renew
-            if not alive(name) or expired:
-                why = "tunnel coupé" if not alive(name) else "renouvellement préventif"
-                log(f"🔁 {name} : {why}, ouverture d'un nouveau tunnel...")
-                if open_with_retry(start_pinggy, name, port, tries=2):
-                    changed.append(name)
-        if ENABLE_WEB and not alive("web"):
-            log("🔁 web : tunnel Cloudflare coupé, relance...")
-            if open_with_retry(start_cloudflared, "web", WEB_PORT, tries=2):
-                changed.append("web")
-        if changed:
-            notify("nouvelle adresse (" + ", ".join(changed) + ")")
-        if not warned and DEADLINE - time.time() < 10 * 60:
-            warned = True
-            tg_send("⚠️ <b>Le serveur s'arrête dans ~10 minutes</b> (limite de 6 h du job GitHub).")
-        if time.time() - last_beat >= 300:
-            last_beat = time.time()
-            svc = {"SSH": port_open(22), "RDP": port_open(3389), "Web": port_open(WEB_PORT)}
-            log(f"[{utc_hm(time.time())} UTC] " + " | ".join(f"{k} {'✅' if v else '⚪'}" for k, v in svc.items())
-                + f" | reste ~{int((DEADLINE - time.time()) // 60)} min")
+        time.sleep(2)
+        now = time.time()
+
+        # Vérification des tunnels toutes les ~15 s
+        if now - last_check >= 15:
+            last_check = now
+            changed = []
+            for name, port in PINGGY_PORTS.items():
+                expired = (time.time() - STARTED.get(name, 0)) >= renew
+                if not alive(name) or expired:
+                    why = "tunnel coupé" if not alive(name) else "renouvellement préventif"
+                    log(f"🔁 {name} : {why}, ouverture d'un nouveau tunnel...")
+                    if open_with_retry(start_pinggy, name, port, tries=2):
+                        changed.append(name)
+            if ENABLE_WEB and not alive("web"):
+                log("🔁 web : tunnel Cloudflare coupé, relance...")
+                if open_with_retry(start_cloudflared, "web", WEB_PORT, tries=2):
+                    changed.append("web")
+            if changed:
+                notify("nouvelle adresse (" + ", ".join(changed) + ")")
+            if not warned and DEADLINE - time.time() < 10 * 60:
+                warned = True
+                tg_send("⚠️ <b>Le serveur s'arrête dans ~10 minutes</b> (limite de 6 h du job GitHub).")
+
+        # Log de statut à intervalle aléatoire (HEARTBEAT_MIN...HEARTBEAT_MAX secondes)
+        if time.time() >= next_beat:
+            log(heartbeat_line())
+            next_beat = time.time() + random.uniform(HEARTBEAT_MIN, HEARTBEAT_MAX)
 
 
 def main():

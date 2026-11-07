@@ -46,7 +46,7 @@ SSH + Bureau à distance (XFCE/RDP) + Web (Nginx), exposés par des tunnels sans
 ## Variables optionnelles (server.yml → `env:`)
 
 `SERVER_USERNAME` (défaut `serveruser`), `ALLOW_ROOT_SSH` (`true`), `WEB_PORT` (`80`),
-`RENEW_MINUTES` (`55`), `RUN_MINUTES` (`345`).
+`RENEW_MINUTES` (`55`), `RUN_MINUTES` (`345`), `HEARTBEAT_MIN_SECONDS` (`30`) et `HEARTBEAT_MAX_SECONDS` (`60`) : un log de statut est affiché à intervalle aléatoire entre ces deux valeurs, avec un message différent (charge, RAM, disque, connexions, âge des tunnels...). Ce sont de vraies mesures, pas de faux messages.
 
 ## ⚠️ Avertissements
 
