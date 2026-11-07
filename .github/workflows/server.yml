@@ -1,0 +1,58 @@
+name: Serveur Debian (SSH + RDP + Web)
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_ssh:
+        description: "Activer SSH (tunnel Pinggy)"
+        type: boolean
+        default: true
+      enable_rdp:
+        description: "Activer le bureau RDP XFCE (tunnel Pinggy)"
+        type: boolean
+        default: true
+      enable_web:
+        description: "Activer le serveur web Nginx (tunnel Cloudflare)"
+        type: boolean
+        default: true
+      auto_restart:
+        description: "Relancer automatiquement un nouveau serveur à la fin (boucle continue)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write        # nécessaire uniquement pour auto_restart
+
+concurrency:
+  group: debian-server
+  cancel-in-progress: false
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360          # maximum d'un job GitHub hébergé
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lancer le serveur
+        env:
+          SERVER_PASSWORD:    ${{ secrets.SERVER_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_USER_ID:   ${{ secrets.TELEGRAM_USER_ID }}
+          ENABLE_SSH: ${{ inputs.enable_ssh }}
+          ENABLE_RDP: ${{ inputs.enable_rdp }}
+          ENABLE_WEB: ${{ inputs.enable_web }}
+          RUN_MINUTES: "345"      # le script s'arrête proprement avant la limite de 360 min
+        run: sudo -E python3 -u server.py
+
+      - name: Relancer un nouveau serveur
+        if: ${{ !cancelled() && inputs.auto_restart }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run server.yml --repo "${{ github.repository }}" \
+            -f enable_ssh=${{ inputs.enable_ssh }} \
+            -f enable_rdp=${{ inputs.enable_rdp }} \
+            -f enable_web=${{ inputs.enable_web }} \
+            -f auto_restart=true
