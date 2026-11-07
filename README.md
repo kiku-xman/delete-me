@@ -45,8 +45,13 @@ SSH + Bureau à distance (XFCE/RDP) + Web (Nginx), exposés par des tunnels sans
 
 ## Variables optionnelles (server.yml → `env:`)
 
-`SERVER_USERNAME` (défaut `serveruser`), `ALLOW_ROOT_SSH` (`true`), `WEB_PORT` (`80`),
+`SERVER_USERNAME` (défaut `serveruser`), `ALLOW_ROOT_SSH` (`true`), `WEB_PORT` (`80`) (toutes réglables dans le step « Lancer le serveur » de server.yml),
 `RENEW_MINUTES` (`55`), `RUN_MINUTES` (`345`), `HEARTBEAT_MIN_SECONDS` (`30`) et `HEARTBEAT_MAX_SECONDS` (`60`) : un log de statut est affiché à intervalle aléatoire entre ces deux valeurs, avec un message différent (charge, RAM, disque, connexions, âge des tunnels...). Ce sont de vraies mesures, pas de faux messages.
+
+## Dépannage
+
+- **`sudo: preserving the entire environment is not supported, '-E' is ignored`** : Ubuntu 26.04 utilise `sudo-rs`. Le workflow passe donc chaque variable explicitement via `sudo env VAR=... python3`. Le script affiche au démarrage `Variables reçues : ... défini / ABSENT` (sans jamais montrer les valeurs).
+- Si `SERVER_PASSWORD` et Telegram sont tous deux absents, le script s'arrête au lieu d'exposer un mot de passe dans les logs.
 
 ## ⚠️ Avertissements
 

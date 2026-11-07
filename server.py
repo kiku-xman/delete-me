@@ -129,13 +129,14 @@ def build_message(reason, extra=None):
     return "\n".join(L)
 
 def notify(reason, extra=None):
-    """Telegram si configuré ; sinon repli : affichage dans les logs (avec avertissement)."""
-    msg = build_message(reason, extra)
-    if tg_send(msg):
+    """Telegram si configuré ; sinon repli : adresses dans les logs (jamais le mot de passe généré)."""
+    if tg_send(build_message(reason, extra)):
         log(f"📨 Telegram : message envoyé ({reason}).")
     else:
         log("⚠️ Telegram non disponible : adresses affichées dans les logs (visibles par tous si dépôt public).")
-        log(re.sub(r"<[^>]+>", "", msg))
+        log(html.unescape(re.sub(r"<[^>]+>", "", build_message(reason))))
+        if extra:
+            log("⚠️ Un mot de passe a été généré mais n'est PAS affiché dans les logs : définissez le secret SERVER_PASSWORD.")
 
 
 # ------------------------------- Tunnels -------------------------------
@@ -375,7 +376,14 @@ def main():
         sys.exit("❌ Ce script doit être lancé en root : sudo -E python3 -u server.py")
     if not (ENABLE_SSH or ENABLE_RDP or ENABLE_WEB):
         sys.exit("❌ Aucun service activé.")
+    def etat(v):
+        return "défini" if v else "ABSENT"
+    log(f"[i] Variables reçues : SERVER_PASSWORD {etat(SERVER_PASSWORD)} | "
+        f"TELEGRAM_BOT_TOKEN {etat(TG_TOKEN)} | TELEGRAM_USER_ID {etat(TG_USER)}")
     if not (TG_TOKEN and TG_USER):
+        if not SERVER_PASSWORD:
+            sys.exit("❌ Ni Telegram ni SERVER_PASSWORD reçus : arrêt (aucun moyen sûr de transmettre un mot de passe). "
+                     "Vérifiez les secrets et le passage des variables à sudo.")
         log("⚠️ TELEGRAM_BOT_TOKEN / TELEGRAM_USER_ID absents : les adresses seront affichées dans les logs.")
 
     def on_signal(signum, _frame):

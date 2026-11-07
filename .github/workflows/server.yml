@@ -43,8 +43,30 @@ jobs:
           ENABLE_SSH: ${{ inputs.enable_ssh }}
           ENABLE_RDP: ${{ inputs.enable_rdp }}
           ENABLE_WEB: ${{ inputs.enable_web }}
-          RUN_MINUTES: "345"      # le script s'arrête proprement avant la limite de 360 min
-        run: sudo -E python3 -u server.py
+          SERVER_USERNAME: "serveruser"
+          ALLOW_ROOT_SSH: "true"
+          WEB_PORT: "80"
+          RUN_MINUTES: "345"            # le script s'arrête proprement avant la limite de 360 min
+          RENEW_MINUTES: "55"
+          HEARTBEAT_MIN_SECONDS: "30"
+          HEARTBEAT_MAX_SECONDS: "60"
+        # Ubuntu 26.04 utilise sudo-rs qui ignore « sudo -E » : on passe donc chaque variable via « env ».
+        run: |
+          sudo env \
+            SERVER_PASSWORD="$SERVER_PASSWORD" \
+            TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+            TELEGRAM_USER_ID="$TELEGRAM_USER_ID" \
+            ENABLE_SSH="$ENABLE_SSH" \
+            ENABLE_RDP="$ENABLE_RDP" \
+            ENABLE_WEB="$ENABLE_WEB" \
+            SERVER_USERNAME="$SERVER_USERNAME" \
+            ALLOW_ROOT_SSH="$ALLOW_ROOT_SSH" \
+            WEB_PORT="$WEB_PORT" \
+            RUN_MINUTES="$RUN_MINUTES" \
+            RENEW_MINUTES="$RENEW_MINUTES" \
+            HEARTBEAT_MIN_SECONDS="$HEARTBEAT_MIN_SECONDS" \
+            HEARTBEAT_MAX_SECONDS="$HEARTBEAT_MAX_SECONDS" \
+            python3 -u server.py
 
       - name: Relancer un nouveau serveur
         if: ${{ !cancelled() && inputs.auto_restart }}
